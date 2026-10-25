@@ -1,0 +1,316 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>거침 부드러움 큐브</title>
+<style>
+/* N×N 큐브(3·5): 칸마다 서로 다른 사진의 한 부분, 새로고침마다 바뀜.
+   큐브 위를 끌면 그 줄이 돌아가고, 빈 곳을 끌면 큐브 전체가 돌아감 */
+:root { --bg: #fff; --fg: #111; color-scheme: light }
+html, body { height: 100%; margin: 0; overflow: hidden }
+body { background: var(--bg); color: var(--fg); font: 12px/1 system-ui, sans-serif; display: grid; place-items: center; touch-action: none; cursor: grab; user-select: none; -webkit-user-select: none }
+body.drag { cursor: grabbing }
+#pg { position: fixed; top: calc(env(safe-area-inset-top, 0px) + 14px); left: 50%; transform: translateX(-50%); display: flex; gap: 2px; z-index: 1; background: rgba(255,255,255,.88); border-radius: 2px }
+#pg a { text-decoration: none; color: inherit; padding: 6px 8px; opacity: .3; line-height: 0 }
+#pg a[aria-current="page"] { opacity: 1 }
+#ctl { position: fixed; bottom: calc(env(safe-area-inset-bottom, 0px) + 14px); left: 50%; transform: translateX(-50%); display: flex; z-index: 1; background: rgba(255,255,255,.88); border-radius: 2px }
+#ctl button { font: inherit; color: inherit; background: none; border: 0; padding: 8px 10px; cursor: pointer; opacity: .3 }
+#ctl button[aria-pressed="true"], #ctl #play { opacity: 1 }
+#play, #snd { line-height: 0 }
+#ctl #snd { opacity: 1 }
+#ctl #snd[aria-pressed="false"] { opacity: .3 }
+#pg a:focus-visible, #ctl button:focus-visible { outline: 1px solid var(--fg) }
+#stage { position: relative; z-index: 0; perspective: 1000px; transform: scale(var(--zoom, 1)) } /* 메뉴·버튼(z-index 1)이 확대한 큐브보다 위에 */
+#cube, .cb { position: relative; transform-style: preserve-3d }
+#cube { width: 0; height: 0 }
+.cb { position: absolute; width: 0; height: 0 }
+/* 조각 한 면: 바깥 면은 사진이 꽉 참, 안쪽 면(돌릴 때 보임)은 종이색 */
+.f { position: absolute; background: #f6f6f3; backface-visibility: hidden }
+.f b { position: absolute; inset: 0; background: #ddd no-repeat; overflow: hidden } /* 테두리 없이 사진이 면을 꽉 채움 */
+.f b video, #orig .crop video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover }
+ /* 칸 탭 → 칸 그림 크게 → 한 번 더 → 원본 사진 → 한 번 더 → 닫힘 */
+#orig { position: fixed; inset: 0; z-index: 2; display: grid; place-items: center; background: rgba(255,255,255,.92); cursor: zoom-out; padding: 56px 16px }
+#orig[hidden] { display: none }
+#orig > * { grid-area: 1 / 1; transition: opacity .4s }
+#orig .crop { position: relative; z-index: 1; transform-origin: 0 0; overflow: hidden; width: min(70vmin, 420px); aspect-ratio: 1; background-repeat: no-repeat; box-shadow: 0 2px 18px rgba(0,0,0,.14) }
+#orig > img, #orig > video { max-width: min(88vw, 720px); max-height: calc(100vh - 112px); opacity: 0 }
+#orig.full .crop.vid { opacity: 0 } /* 영상은 겹쳐 바뀜, 사진은 원본 속 제자리로 날아가 앉음 */
+#orig.full > img, #orig.full > video { opacity: 1 }
+#orig [hidden] { display: none }
+.f::after { content: ""; position: absolute; inset: 0; background: rgba(0,0,0,var(--dim, .18)); pointer-events: none }
+/* 메뉴 아이콘: 선택된 페이지 아이콘만 그 페이지처럼 움직임(직조 = 칸마다 위아래가 번갈아 뒤집힘, 큐브 = 천천히 회전) */
+.weave .pb { opacity: 0 }
+[aria-current] .weave .pa { animation: flipA 3s steps(1) infinite }
+[aria-current] .weave .pb { animation: flipB 3s steps(1) infinite }
+@keyframes flipA { 0% { opacity: 1 } 50%, 100% { opacity: 0 } }
+@keyframes flipB { 0% { opacity: 0 } 50%, 100% { opacity: 1 } }
+.mini { display: inline-block; width: 16px; height: 16px; perspective: 60px }
+.mini b { position: relative; display: block; width: 9px; height: 9px; margin: 3.5px; transform-style: preserve-3d; transform: rotateX(-28deg) rotateY(38deg) }
+.mini i { position: absolute; inset: 0; border: 1.2px solid currentColor; background: #fff; backface-visibility: hidden }
+.mini i:nth-child(1) { transform: translateZ(4.5px) } .mini i:nth-child(2) { transform: rotateY(180deg) translateZ(4.5px) }
+.mini i:nth-child(3) { transform: rotateY(90deg) translateZ(4.5px) } .mini i:nth-child(4) { transform: rotateY(-90deg) translateZ(4.5px) }
+.mini i:nth-child(5) { transform: rotateX(90deg) translateZ(4.5px) } .mini i:nth-child(6) { transform: rotateX(-90deg) translateZ(4.5px) }
+[aria-current] .mini b { animation: spin 7s linear infinite }
+@keyframes spin { to { transform: rotateX(-28deg) rotateY(398deg) } }
+/* 동작 줄이기 설정이어도 멈추지 않고 절반 속도로 */
+@media (prefers-reduced-motion: reduce) { [aria-current] .weave g { animation-duration: 6s } [aria-current] .mini b { animation-duration: 14s } }
+</style>
+
+<nav id="pg" aria-label="페이지"><a href="cut.html" aria-label="직조"><svg class="weave" width="16" height="16" viewBox="0 0 16 16" fill="#fff" stroke="currentColor" stroke-width="1.2" aria-hidden="true"><rect x="1" y="4" width="14" height="3"/><rect x="1" y="9" width="14" height="3"/><rect x="4" y="1" width="3" height="14"/><rect x="9" y="1" width="3" height="14"/><g class="pa"><rect x="8.4" y="4" width="4.2" height="3" stroke="none"/><rect x="3.4" y="9" width="4.2" height="3" stroke="none"/><path d="M8.4 4h4.2M8.4 7h4.2M3.4 9h4.2M3.4 12h4.2"/></g><g class="pb"><rect x="3.4" y="4" width="4.2" height="3" stroke="none"/><rect x="8.4" y="9" width="4.2" height="3" stroke="none"/><path d="M3.4 4h4.2M3.4 7h4.2M8.4 9h4.2M8.4 12h4.2"/></g></svg></a><a href="cube.html" aria-label="큐브" aria-current="page"><span class="mini" aria-hidden="true"><b><i></i><i></i><i></i><i></i><i></i><i></i></b></span></a></nav>
+<div id="stage"><div id="cube" role="img" aria-label="거침과 부드러움 사진의 일부분으로 만든 큐브. 큐브를 끌면 줄이 돌아가고, 빈 곳을 끌면 전체가 돌아감"></div></div>
+<div id="orig" hidden role="dialog" aria-label="원본"><div class="crop"><video muted playsinline hidden></video></div><img alt=""><video muted playsinline hidden></video></div>
+<div id="ctl"><button id="play" type="button"></button><span aria-hidden="true" style="opacity:.2;padding:8px 2px">|</span><button type="button" data-n="3">3×3</button><button type="button" data-n="5">5×5</button><span aria-hidden="true" style="opacity:.2;padding:8px 2px">|</span><button id="snd" type="button"></button></div>
+
+<script src="strip.js"></script>
+<script>
+const SIZE = () => Math.min(240, Math.min(innerWidth, innerHeight) * 0.42); // 큐브 한 변(px)
+const CROP = [1.6, 3];    // 사진을 칸의 몇 배로 키워 일부만 보여줄지
+// 영상: 칸 안에서 소리 없이 from~to초 구간만 반복. 구간은 여기 숫자만 바꾸면 됨
+const VIDEOS = [
+  { src: 'a/004.mp4', from: 0, to: 5 },
+  { src: 'a/013.mp4', from: 0, to: 5 },
+  { src: 'a/064.mp4', from: 0, to: 5 },
+  { src: 'a/123.mp4', from: 0, to: 5 },
+];
+const SPIN = matchMedia('(prefers-reduced-motion: reduce)').matches ? 0.028 : 0.055; // 저절로 도는 속도(도/프레임). 동작 줄이기 설정이면 절반으로 느리게(멈추지는 않음)
+const FRICTION = 0.95;
+const RESUME_MS = 2000;   // 손으로 돌리다 놓으면 잠시 멈췄다가 이 시간 뒤 마지막 방향으로 다시 천천히 돎
+const TWIST_MS = 260;     // 손으로 한 줄 돌리는 시간
+const AUTO_MS = 450;      // 재생 중 저절로 한 줄 돌리는 시간(천천히)
+const AUTO_GAP = 300;     // 재생 중 한 줄 돌린 뒤 다음까지 쉬는 시간(ms)
+const LIGHT = norm([-0.4, -0.6, 0.7]);
+
+// ── 3×3 행렬(행 우선) ──
+function norm(v) { const l = Math.hypot(...v); return v.map(x => x / l); }
+const mul = (A, B) => A.map(r => [0, 1, 2].map(j => r[0] * B[0][j] + r[1] * B[1][j] + r[2] * B[2][j]));
+const app = (A, v) => A.map(r => r[0] * v[0] + r[1] * v[1] + r[2] * v[2]);
+const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+const round = A => A.map(r => r.map(Math.round));
+function rot(axis, deg) {
+  const t = deg * Math.PI / 180, c = Math.cos(t), s = Math.sin(t);
+  return [[[1, 0, 0], [0, c, -s], [0, s, c]], [[c, 0, s], [0, 1, 0], [-s, 0, c]], [[c, -s, 0], [s, c, 0], [0, 0, 1]]][axis];
+}
+const I = [[1, 0, 0], [0, 1, 0], [0, 0, 1]];
+const css = (M, t = [0, 0, 0]) => `matrix3d(${M[0][0]},${M[1][0]},${M[2][0]},0,${M[0][1]},${M[1][1]},${M[2][1]},0,${M[0][2]},${M[1][2]},${M[2][2]},0,${t[0]},${t[1]},${t[2]},1)`;
+
+// 조각 면 6개: 로컬 법선 → 그 방향을 향하게 하는 회전(+z 면을 돌림)
+const FACES = [
+  [[0, 0, 1], I], [[0, 0, -1], [[-1, 0, 0], [0, 1, 0], [0, 0, -1]]],
+  [[1, 0, 0], [[0, 0, 1], [0, 1, 0], [-1, 0, 0]]], [[-1, 0, 0], [[0, 0, -1], [0, 1, 0], [1, 0, 0]]],
+  [[0, 1, 0], [[1, 0, 0], [0, 0, 1], [0, -1, 0]]], [[0, -1, 0], [[1, 0, 0], [0, 0, -1], [0, 1, 0]]],
+];
+
+const shuffle = a => { a = [...a]; for (let i = a.length - 1; i > 0; i--) { const j = Math.random() * (i + 1) | 0; [a[i], a[j]] = [a[j], a[i]]; } return a; };
+const SRCS = shuffle(VERT.filter(it => it.src && it.t !== 'vid').map(it => it.src));
+
+const cubeEl = document.getElementById('cube');
+let N, u, cubies = [], stickers = [], busy = false;
+let rx = -22, ry = 32, vx = 0, vy = SPIN;
+let dir = [0, 1], resumeAt = 0; // 저절로 도는 방향(rx, ry 변화 비율) = 마지막으로 끈 방향
+const view = () => mul(rot(0, rx), rot(1, ry));
+
+// 사진 한 장을 CROP배로 키워 무작위 위치만 보여줌(가로로 긴 사진은 높이 기준)
+function sticker(src) {
+  const b = document.createElement('b'); b.dataset.src = src; const z = (CROP[0] + Math.random() * (CROP[1] - CROP[0])) * 100, px = Math.random(), py = Math.random();
+  Object.assign(b.style, { backgroundImage: `url("${src}")`, backgroundSize: `${z}% auto`, backgroundPosition: `${px * 100}% ${py * 100}%` });
+  b.cut = { z, px, py, wide: false }; // 원본에서 어디를 잘랐는지(원본 보기에서 제자리로 날아갈 때 씀)
+  const im = new Image(); im.onload = () => { if (im.height < im.width) { b.style.backgroundSize = `auto ${z}%`; b.cut.wide = true; } b.cut.ar = im.width / im.height; }; im.src = src;
+  return b;
+}
+
+// 영상 칸: CROP배로 키워 무작위 위치만 보여줌
+function loopPart(vd, v) {
+  Object.assign(vd, { muted: true, playsInline: true, autoplay: true, preload: 'auto', src: v.src });
+  vd.addEventListener('loadedmetadata', () => { vd.currentTime = v.from; });
+  vd.addEventListener('timeupdate', () => { if (vd.currentTime >= v.to || vd.currentTime < v.from - .1) vd.currentTime = v.from; });
+  vd.addEventListener('ended', () => { vd.currentTime = v.from; vd.play(); });
+  vd.play().catch(() => {});
+}
+function videoSticker(v) {
+  const b = document.createElement('b'), vd = document.createElement('video'), z = CROP[0] + Math.random() * (CROP[1] - CROP[0]);
+  vd.style.transform = `scale(${z})`; vd.style.transformOrigin = `${Math.random() * 100}% ${Math.random() * 100}%`;
+  loopPart(vd, v); b.video = v; b.append(vd);
+  return b;
+}
+
+const place = (c, M = I) => c.el.style.transform = css(mul(M, c.R), app(M, c.p).map(x => x * u));
+
+function build(n) {
+  N = n; u = SIZE() / N; cubeEl.replaceChildren(); cubies = []; stickers = [];
+  const h = (N - 1) / 2; let k = 0, s = 0;
+  const vidAt = new Map(shuffle([...Array(6 * N * N).keys()]).slice(0, VIDEOS.length).map((at, i) => [at, VIDEOS[i]])); // 영상 넣을 칸
+  for (let i = 0; i < N; i++) for (let j = 0; j < N; j++) for (let l = 0; l < N; l++) {
+    const p = [i - h, j - h, l - h];
+    if (Math.max(...p.map(Math.abs)) < h) continue; // 안쪽 조각은 안 보이므로 생략
+    const el = document.createElement('div'); el.className = 'cb';
+    const c = { el, p, R: I };
+    FACES.forEach(([n, M]) => {
+      const f = document.createElement('div'); f.className = 'f';
+      Object.assign(f.style, { width: u + 'px', height: u + 'px', left: -u / 2 + 'px', top: -u / 2 + 'px', transform: css(M, n.map(x => x * u / 2)) });
+      if (dot(p, n) === h) { const v = vidAt.get(s++); f.append(v ? videoSticker(v) : sticker(SRCS[k++ % SRCS.length])); stickers.push({ f, n, c }); }
+      f.cube = { c, n, f };
+      el.append(f);
+    });
+    place(c); cubies.push(c); cubeEl.append(el);
+  }
+  document.querySelectorAll('[data-n]').forEach(b => b.setAttribute('aria-pressed', +b.dataset.n === N));
+}
+
+// 한 줄(axis 방향 좌표가 layer인 조각들)을 sign×90° 돌림
+// vol = 딸깍 소리 크기(손으로 1, 재생 중 저절로는 작게)
+function twist(axis, layer, sign, vol = 1, ms = TWIST_MS) {
+  busy = true; click(vol * .5, 1700);
+  const layerCubies = cubies.filter(c => Math.abs(c.p[axis] - layer) < .01), t0 = performance.now();
+  (function step(t) {
+    const k = Math.min(1, (t - t0) / ms), e = 1 - (1 - k) ** 3;
+    layerCubies.forEach(c => place(c, rot(axis, sign * 90 * e)));
+    if (k < 1) return requestAnimationFrame(step);
+    const Q = round(rot(axis, sign * 90));
+    layerCubies.forEach(c => { c.R = round(mul(Q, c.R)); c.p = app(Q, c.p).map(Math.round); place(c); });
+    busy = false; click(vol, 2600);
+  })(t0);
+}
+
+// 화면을 바라보는 정도에 따라 스티커 면 명암
+function shade(V) {
+  stickers.forEach(s => { const wn = app(V, app(s.c.R, s.n)); s.f.style.setProperty('--dim', ((1 - Math.max(0, dot(wn, LIGHT))) * 0.3).toFixed(3)); });
+}
+
+let drag = null;
+function tick() {
+  if (!drag || drag.kind !== 'view') {
+    const on = performance.now() >= resumeAt, tx = on ? dir[0] * SPIN : 0, ty = on ? dir[1] * SPIN : 0;
+    rx += vx; ry += vy; vx = tx + (vx - tx) * FRICTION; vy = ty + (vy - ty) * FRICTION;
+  }
+  const V = view();
+  cubeEl.style.transform = css(V);
+  shade(V);
+  requestAnimationFrame(tick);
+}
+
+// 확대·축소: 휠·트랙패드 핀치·두 손가락 핀치(화면 가운데 기준)
+const ZOOM = [0.6, 3]; let zoom = 1, pinch = null;
+const pts = new Map(), pinchD = () => { const [a, b] = [...pts.values()]; return Math.hypot(a.x - b.x, a.y - b.y); };
+function zoomBy(f) { zoom = Math.min(ZOOM[1], Math.max(ZOOM[0], zoom * f)); document.getElementById('stage').style.setProperty('--zoom', zoom); }
+addEventListener('wheel', e => { e.preventDefault(); zoomBy(Math.exp(-e.deltaY * (e.ctrlKey ? 0.01 : 0.002))); }, { passive: false });
+let gk = 1; // 사파리 트랙패드 핀치
+addEventListener('gesturestart', e => { e.preventDefault(); gk = zoom; });
+addEventListener('gesturechange', e => { e.preventDefault(); zoomBy(gk * e.scale / zoom); });
+addEventListener('dblclick', e => { if (!e.target.closest('#pg, #ctl, #orig')) { zoom = 1; zoomBy(1); } });
+
+addEventListener('pointerdown', e => {
+  wakeAudio();
+  if (e.target.closest('#pg, #ctl, #orig')) return;
+  pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (pts.size === 2) { drag = null; pinch = pinchD(); return; } // 두 손가락 = 핀치(돌리기 취소)
+  const f = e.target.closest('.f');
+  // 칸을 누르면 줄이 돌아가는 중(busy)이어도 칸으로 처리 → 탭하면 원본이 뜸. 끌어서 돌리기만 busy일 때 막힘
+  drag = f ? { kind: 'face', hit: f.cube, x: e.clientX, y: e.clientY } : { kind: 'view', x: e.clientX, y: e.clientY };
+  document.body.classList.add('drag');
+});
+addEventListener('pointermove', e => {
+  if (pts.has(e.pointerId)) pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (pinch && pts.size === 2) { const d = pinchD(); zoomBy(d / pinch); pinch = d; return; }
+  if (!drag) return;
+  const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+  if (drag.kind === 'view') { ry += dx * 0.4; rx -= dy * 0.4; vy = dx * 0.4; vx = -dy * 0.4; drag.x = e.clientX; drag.y = e.clientY; return; }
+  if (Math.hypot(dx, dy) < 10 || busy) return;
+  // 누른 면의 바깥 방향(n)에 수직인 두 축 중, 화면에서 끈 방향과 가장 가까운 축(m)으로 밀기
+  const { c, n: ln } = drag.hit, n = app(c.R, ln), V = view();
+  let best = null;
+  [0, 1, 2].filter(a => !n[a]).forEach(a => {
+    const e3 = [0, 0, 0]; e3[a] = 1;
+    const s = app(V, e3), len = Math.hypot(s[0], s[1]) || 1, d = (dx * s[0] + dy * s[1]) / len;
+    if (!best || Math.abs(d) > Math.abs(best.d)) best = { e3, d };
+  });
+  const m = best.e3.map(x => x * Math.sign(best.d)), r = cross(n, m), axis = r.findIndex(x => x);
+  twist(axis, c.p[axis], Math.sign(r[axis]));
+  drag = null; document.body.classList.remove('drag');
+});
+// 끌지 않고 뗀 칸 = 탭 → 그 칸 그림을 크게
+const orig = document.getElementById('orig');
+const [cropVd, fullImg, fullVd] = [orig.querySelector('.crop video'), orig.querySelector(':scope > img'), orig.querySelector(':scope > video')];
+function showOrig(b) {
+  const crop = orig.querySelector('.crop'), v = b.video;
+  ['backgroundImage', 'backgroundSize', 'backgroundPosition'].forEach(k => crop.style[k] = v ? '' : b.style[k]);
+  crop.classList.toggle('vid', !!v); crop.style.transition = 'none'; crop.style.transform = ''; crop.cut = v ? null : b.cut;
+  cropVd.hidden = fullVd.hidden = !v; fullImg.hidden = !!v;
+  if (v) {
+    const src = b.querySelector('video');
+    cropVd.style.transform = src.style.transform; cropVd.style.transformOrigin = src.style.transformOrigin;
+    if (cropVd.getAttribute('src') !== v.src) { loopPart(cropVd, v); loopPart(fullVd, v); } else { cropVd.play(); fullVd.play(); }
+  } else fullImg.src = b.dataset.src;
+  orig.classList.remove('full'); orig.hidden = false;
+}
+const closeOrig = () => { orig.hidden = true; cropVd.pause(); fullVd.pause(); };
+// 두 번째 탭: 원본이 나타나면서 칸 그림이 원본 속 잘린 자리로 줄어들며 이동
+function flyToPlace() {
+  const crop = orig.querySelector('.crop'), c = crop.cut;
+  if (!c?.ar) return;
+  const C = crop.getBoundingClientRect(), R = fullImg.getBoundingClientRect();
+  const [iw, ih] = c.wide ? [c.z / 100 * c.ar, c.z / 100] : [c.z / 100, c.z / 100 / c.ar]; // 칸 크기 = 1일 때 원본 크기
+  const fw = 1 / iw, fh = 1 / ih, fl = (1 - fw) * c.px, ft = (1 - fh) * c.py; // 잘린 자리(원본 대비 비율)
+  const s = fw * R.width / C.width;
+  crop.style.transition = 'transform .7s cubic-bezier(.2,.7,.2,1), box-shadow .7s';
+  crop.style.transform = `translate(${R.left + fl * R.width - C.left}px, ${R.top + ft * R.height - C.top}px) scale(${s})`;
+}
+orig.addEventListener('click', () => { if (orig.classList.contains('full')) return closeOrig(); orig.classList.add('full'); fullImg.decode?.().catch(() => {}).finally(flyToPlace) ?? flyToPlace(); });
+addEventListener('keydown', e => { if (e.key === 'Escape') closeOrig(); });
+const up = e => {
+  pts.delete(e.pointerId); if (pts.size < 2) pinch = null;
+  if (drag?.kind === 'view') { const l = Math.hypot(vx, vy); if (l > .05) dir = [vx / l, vy / l]; resumeAt = performance.now() + RESUME_MS; }
+  const b = drag?.kind === 'face' && Math.hypot(e.clientX - drag.x, e.clientY - drag.y) < 10 && drag.hit.f.querySelector('b');
+  drag = null; document.body.classList.remove('drag');
+  if (b) showOrig(b);
+};
+addEventListener('pointerup', up);
+addEventListener('pointercancel', up);
+
+// 재생: 아무 줄이나 골라 저절로 계속 돌림
+const btn = document.getElementById('play');
+const ICON = { play: '<path d="M3 1.5v9l7.5-4.5z"/>', pause: '<path d="M2.5 1.5h2.5v9h-2.5zM7 1.5h2.5v9h-2.5z"/>' };
+let playing = false, auto = 0;
+function setPlaying(p) {
+  playing = p; clearTimeout(auto);
+  btn.innerHTML = `<svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor" aria-hidden="true">${p ? ICON.pause : ICON.play}</svg>`;
+  btn.setAttribute('aria-label', p ? '멈춤' : '재생');
+  if (p) autoTwist();
+}
+function autoTwist() {
+  if (!playing) return;
+  if (!busy) { const h = (N - 1) / 2; twist(Math.random() * 3 | 0, Math.floor(Math.random() * N) - h, Math.random() < .5 ? 1 : -1, .35, AUTO_MS); }
+  auto = setTimeout(autoTwist, AUTO_MS + AUTO_GAP);
+}
+btn.addEventListener('click', () => { wakeAudio(); setPlaying(!playing); });
+
+// 딸깍: 짧은 잡음을 대역 필터로 걸러 플라스틱 부딪히는 소리처럼. 브라우저 정책상 첫 터치 뒤부터 남
+let actx = null, soundOn = true;
+function wakeAudio() {
+  actx ??= new (window.AudioContext || window.webkitAudioContext)();
+  if (actx.state === 'suspended') actx.resume();
+}
+function click(vol, freq) {
+  if (!soundOn || !actx) return;
+  const len = .045, buf = actx.createBuffer(1, actx.sampleRate * len | 0, actx.sampleRate), d = buf.getChannelData(0);
+  for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / d.length) ** 5;
+  const src = actx.createBufferSource(), bp = actx.createBiquadFilter(), g = actx.createGain();
+  src.buffer = buf; bp.type = 'bandpass'; bp.frequency.value = freq; bp.Q.value = 1.4; g.gain.value = vol;
+  src.connect(bp).connect(g).connect(actx.destination); src.start();
+}
+const snd = document.getElementById('snd');
+const ICON_SND = { on: '<path d="M1.5 4.5h2.5l3-2.5v8l-3-2.5H1.5z" fill="currentColor"/><path d="M8.6 4a3 3 0 0 1 0 4M10.2 2.6a5 5 0 0 1 0 6.8" fill="none" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/>', off: '<path d="M1.5 4.5h2.5l3-2.5v8l-3-2.5H1.5z" fill="currentColor"/><path d="M8.5 4.2l3 3.6M11.5 4.2l-3 3.6" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/>' };
+function setSound(on) {
+  soundOn = on; snd.setAttribute('aria-pressed', on); snd.setAttribute('aria-label', on ? '소리 끄기' : '소리 켜기');
+  snd.innerHTML = `<svg width="13" height="12" viewBox="0 0 13 12" aria-hidden="true">${on ? ICON_SND.on : ICON_SND.off}</svg>`;
+}
+snd.addEventListener('click', () => { wakeAudio(); setSound(!soundOn); });
+
+setSound(true);
+setPlaying(false);
+document.querySelectorAll('[data-n]').forEach(b => b.addEventListener('click', () => { location.hash = b.dataset.n; }));
+const fromHash = () => build(location.hash === '#5' ? 5 : 3);
+addEventListener('hashchange', fromHash);
+let rt; addEventListener('resize', () => { clearTimeout(rt); rt = setTimeout(fromHash, 200); });
+fromHash();
+tick();
+</script>

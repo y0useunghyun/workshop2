@@ -1,0 +1,467 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>거침 부드러움 해체 직조</title>
+<style>
+/* 띠 한 줄 = 사진 한 장을 길게 오린 종이 띠(해체). 켤 때마다 무작위로 엮고, 띠는 흘러나오며 잡아 끌 수 있음. 아래 버튼: 재생·배속·흑백·직접 엮기 */
+:root { --bg: #fff; --fg: #111; color-scheme: light }
+html, body { height: 100%; margin: 0; overflow: hidden }
+body { background: var(--bg); color: var(--fg); font: 12px/1 system-ui, sans-serif }
+canvas { display: block; width: 100vw; height: 100vh; touch-action: none; cursor: grab }
+/* 3D로 돌린 판의 뒷면: 트레이싱지처럼 사진이 좌우 반전돼 흐릿하게 비침 */
+#c.back { opacity: .5 }
+#c { filter: blur(var(--blur, 0px)) } /* 블러 슬라이더 */
+body.mono #c { filter: grayscale(1) blur(var(--blur, 0px)) } /* 흑백 버튼: 직조 판만 흑백(원본 보기는 컬러 그대로) */
+canvas.drag { cursor: grabbing }
+#pg { position: fixed; top: calc(env(safe-area-inset-top, 0px) + 14px); left: 50%; transform: translateX(-50%); display: flex; gap: 2px; background: rgba(255,255,255,.88); border-radius: 2px; z-index: 1 }
+#pg a { text-decoration: none; color: inherit; padding: 6px 8px; opacity: .3; line-height: 0 }
+#pg a[aria-current="page"] { opacity: 1 }
+#pg a:focus-visible { outline: 1px solid var(--fg) }
+/* 아래 가운데 재생·멈춤 + 배속 */
+#ctl { position: fixed; bottom: calc(env(safe-area-inset-bottom, 0px) + 14px); left: 50%; transform: translateX(-50%); z-index: 2;
+  display: flex; align-items: center; background: rgba(255,255,255,.88); border-radius: 2px }
+#ctl button { white-space: nowrap; font: inherit; color: inherit; background: none; border: 0; padding: 8px 9px; cursor: pointer; opacity: .3 }
+#ctl button[aria-pressed="true"], #play { opacity: 1 !important }
+#mono, #make, #shuffle { line-height: 0 }
+/* 블러: 얇은 가로선 + 짧은 세로선 손잡이만 */
+#mix { -webkit-appearance: none; appearance: none; width: 52px; height: 1px; margin: 0 8px; background: currentColor; opacity: .35; cursor: pointer }
+#mix:hover, #mix:focus-visible { opacity: .8; outline: none }
+#mix::-webkit-slider-thumb { -webkit-appearance: none; width: 2px; height: 11px; border-radius: 0; background: var(--fg) }
+#mix::-moz-range-thumb { width: 2px; height: 11px; border: 0; border-radius: 0; background: var(--fg) }
+@media (max-width: 420px) { #mix { width: 36px; margin: 0 4px } }
+#ctl #shuffle { opacity: .6 }
+#ctl #shuffle:hover { opacity: 1 }
+/* 직접 엮기: 아래에 띠 후보. 고른 후보(진한 테두리)를 빈 줄에 탭해서 꽂음 */
+#tray { position: fixed; left: 0; right: 0; bottom: calc(env(safe-area-inset-bottom, 0px) + 50px); z-index: 1; display: grid; justify-items: center; gap: 8px }
+#tray[hidden] { display: none }
+/* 고른 띠를 한 번 더 누르면 띠 전체를 길게 크게 봄. 아무 데나 누르면 닫힘(고른 상태는 유지) */
+#peek { position: fixed; inset: 0; z-index: 3; display: grid; place-items: center; background: rgba(255,255,255,.92); cursor: zoom-out }
+#peek[hidden] { display: none }
+#peek canvas { height: min(86vh, 900px); width: auto; box-shadow: 0 2px 18px rgba(0,0,0,.14) }
+/* 종이 띠 후보: 베틀 줄과 같은 폭의 세로 띠를 판 너비만큼 늘어놓음. 좌우로 끌어 넘김, 양 끝은 흐리게 */
+#cands { display: flex; align-items: flex-start; background: #fff; transition: height .6s cubic-bezier(.2,.7,.2,1), width .6s cubic-bezier(.2,.7,.2,1); overflow-x: auto; padding-top: 10px; scrollbar-width: none; touch-action: pan-x; cursor: grab;
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 6%, #000 94%, transparent); mask-image: linear-gradient(90deg, transparent, #000 6%, #000 94%, transparent) }
+#cands::-webkit-scrollbar { display: none }
+#cands.drag { cursor: grabbing }
+#cands button { flex: none; padding: 0; border: 0; background: none; cursor: inherit; line-height: 0; box-shadow: 0 1px 4px rgba(0,0,0,.18); opacity: .6; transition: transform .2s, opacity .2s }
+#cands button:hover { opacity: .85 }
+#cands button[aria-pressed="true"] { opacity: 1; outline: 1.5px solid var(--fg); outline-offset: 1px }
+/* 다 채운 뒤(small): 띠 줄이 짧아지고 띠는 윗부분만, 마우스를 올리거나 고른 띠는 조금 더 올라옴 */
+#tray.small #cands button { transform: translateY(24px) }
+#tray.small #cands button:hover, #tray.small #cands button[aria-pressed="true"] { transform: none }
+#play { line-height: 0; padding: 8px 12px !important }
+#ctl button:focus-visible { outline: 1px solid var(--fg) }
+@media (max-width: 420px) { #ctl button { padding: 8px 6px } }
+/* 조각 탭 → 잘린 조각만 → 한 번 더 → 나머지 원본이 서서히 나타남 → 한 번 더 → 닫힘 */
+#orig { position: fixed; inset: 0; z-index: 2; display: grid; place-items: center; background: rgba(255,255,255,.92); cursor: zoom-out; padding: 56px 16px }
+#orig[hidden] { display: none }
+#orig figure { position: relative; margin: 0; line-height: 0 }
+#orig img { max-width: min(88vw, 720px); max-height: calc(100vh - 112px); opacity: 0; transition: opacity .4s }
+#orig .slice { position: absolute; inset: 0; opacity: 1; clip-path: inset(var(--t, 0) var(--r) var(--b, 0) var(--l)) }
+#orig.full img { opacity: 1 }
+/* 메뉴 아이콘: 선택된 페이지 아이콘만 그 페이지처럼 움직임(직조 = 칸마다 위아래가 번갈아 뒤집힘, 큐브 = 천천히 회전) */
+.weave .pb { opacity: 0 }
+[aria-current] .weave .pa { animation: flipA 3s steps(1) infinite }
+[aria-current] .weave .pb { animation: flipB 3s steps(1) infinite }
+@keyframes flipA { 0% { opacity: 1 } 50%, 100% { opacity: 0 } }
+@keyframes flipB { 0% { opacity: 0 } 50%, 100% { opacity: 1 } }
+.mini { display: inline-block; width: 16px; height: 16px; perspective: 60px }
+.mini b { position: relative; display: block; width: 9px; height: 9px; margin: 3.5px; transform-style: preserve-3d; transform: rotateX(-28deg) rotateY(38deg) }
+.mini i { position: absolute; inset: 0; border: 1.2px solid currentColor; background: #fff; backface-visibility: hidden }
+.mini i:nth-child(1) { transform: translateZ(4.5px) } .mini i:nth-child(2) { transform: rotateY(180deg) translateZ(4.5px) }
+.mini i:nth-child(3) { transform: rotateY(90deg) translateZ(4.5px) } .mini i:nth-child(4) { transform: rotateY(-90deg) translateZ(4.5px) }
+.mini i:nth-child(5) { transform: rotateX(90deg) translateZ(4.5px) } .mini i:nth-child(6) { transform: rotateX(-90deg) translateZ(4.5px) }
+[aria-current] .mini b { animation: spin 7s linear infinite }
+@keyframes spin { to { transform: rotateX(-28deg) rotateY(398deg) } }
+/* 동작 줄이기 설정이어도 멈추지 않고 절반 속도로 */
+@media (prefers-reduced-motion: reduce) { [aria-current] .weave g { animation-duration: 6s } [aria-current] .mini b { animation-duration: 14s } }
+</style>
+
+<canvas id="c" aria-label="거침과 부드러움 사진을 잘라 섞어 다시 엮은 직조. 띠를 끌어 움직일 수 있음"></canvas>
+<nav id="pg" aria-label="페이지"><a href="cut.html" aria-label="직조" aria-current="page"><svg class="weave" width="16" height="16" viewBox="0 0 16 16" fill="#fff" stroke="currentColor" stroke-width="1.2" aria-hidden="true"><rect x="1" y="4" width="14" height="3"/><rect x="1" y="9" width="14" height="3"/><rect x="4" y="1" width="3" height="14"/><rect x="9" y="1" width="3" height="14"/><g class="pa"><rect x="8.4" y="4" width="4.2" height="3" stroke="none"/><rect x="3.4" y="9" width="4.2" height="3" stroke="none"/><path d="M8.4 4h4.2M8.4 7h4.2M3.4 9h4.2M3.4 12h4.2"/></g><g class="pb"><rect x="3.4" y="4" width="4.2" height="3" stroke="none"/><rect x="8.4" y="9" width="4.2" height="3" stroke="none"/><path d="M3.4 4h4.2M3.4 7h4.2M8.4 9h4.2M8.4 12h4.2"/></g></svg></a><a href="cube.html" aria-label="큐브"><span class="mini" aria-hidden="true"><b><i></i><i></i><i></i><i></i><i></i><i></i></b></span></a></nav>
+<div id="orig" hidden role="dialog" aria-label="원본 사진"><figure><img alt=""><img class="slice" alt=""></figure></div>
+<div id="ctl"><button id="play" type="button"></button><button type="button" data-rate="0.5">0.5×</button><button type="button" data-rate="1">1×</button><button type="button" data-rate="2">2×</button><span aria-hidden="true" style="opacity:.2;padding:0 2px">|</span><button id="mono" type="button" aria-pressed="false" aria-label="흑백"><svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.4" fill="none" stroke="currentColor" stroke-width="1.2"/><path d="M8 1.6a6.4 6.4 0 0 0 0 12.8z" fill="currentColor"/></svg></button><button id="shuffle" type="button" aria-label="랜덤 배치"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1.5 4.5h3c3 0 4 7 7 7h3M1.5 11.5h3c1.3 0 2.2-1.3 3-2.8M9.3 5.3c.6-.5 1.3-.8 2.2-.8h3M12.5 2.5l2 2-2 2M12.5 9.5l2 2-2 2"/></svg></button><input id="mix" type="range" min="0" max="1" step="0.01" value="0" aria-label="흐림 정도"><span aria-hidden="true" style="opacity:.2;padding:0 2px">|</span><button id="make" type="button" aria-pressed="false" aria-label="직접 엮기"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" aria-hidden="true"><rect x="1.6" y="1.6" width="12.8" height="12.8" stroke-dasharray="2.4 1.6"/><path d="M8 5v6M5 8h6"/></svg></button></div>
+<div id="tray" hidden><div id="cands"></div></div>
+<div id="peek" hidden role="dialog" aria-label="띠 크게 보기"></div>
+
+<script src="strip.js"></script>
+<script>
+const PAPER = '#f4f3ee';          // 트레이싱지 바탕
+const TAIL = 1.3;                 // 판 밖으로 나온 띠 끝 길이(기본 띠 폭의 몇 배)
+const GAP = 2;                    // 띠 사이 얇은 틈(종이 가장자리가 보이게)
+const SHADE = 1.5;                // 엮인 자리 그림자 진하기 배율
+const FLOW = 0.3;                 // 1× 흐르는 속도(초당 띠 폭의 몇 배)
+const FRICTION = 0.94;            // 끌다 놓은 뒤 미끄러짐 감속
+
+// 줄마다 사진 LONG_PER장을 무작위로(켤 때마다 다름). deal(사진들, 세로 띠 수, 가로 띠 수) → [세로 띠 사진 목록, 가로 띠 사진 목록]
+const deal = (ps, nx, ny) => { const sh = shuffle(ps), all = Array.from({ length: nx + ny }, (_, i) => sh.length >= (i + 1) * LONG_PER ? sh.slice(i * LONG_PER, (i + 1) * LONG_PER) : shuffle(ps).slice(0, LONG_PER)); return [all.slice(0, nx), all.slice(nx)]; };
+
+const shuffle = a => { a = [...a]; for (let i = a.length - 1; i > 0; i--) { const j = Math.random() * (i + 1) | 0; [a[i], a[j]] = [a[j], a[i]]; } return a; };
+
+const cv = document.getElementById('c'), ctx = cv.getContext('2d');
+const load = src => new Promise(res => { const im = new Image(); im.onload = () => res(im); im.onerror = () => res(null); im.src = src; });
+
+
+
+// 사진 한 장 = { im 원본, g 거침0·부드러움1, src }
+const pieces = Promise.all(VERT.filter(it => it.src && it.t !== 'vid').map(async it => {
+  const im = await load(it.src); return im ? [{ im, g: it.g, src: it.src }] : [];
+})).then(a => a.flat());
+
+let W, H, dpr, sw, board, warps = [], wefts = [], over;
+let paused = true, rate = 1;
+const BLUR_MAX = 4; // 블러 슬라이더 끝에서 흐림 정도(px). 사진은 남고 형태만 흐려짐
+// 직접 엮기: 빈 베틀에서 시작, 아래 후보 띠(cands)를 골라(sel) 빈 줄에 꽂음
+// 베틀 판은 기존 직조와 똑같이, 후보 띠는 화면 맨 아래(버튼 줄 위)에 짧은 세로 띠로 틈 없이 늘어놓음. 보이는 폭 = 베틀 좌우 폭
+// 띠 고르는 동안: 베틀을 줄여 위로, 아래 띠 줄은 크게(BIG). 다 채우면 베틀은 기존 직조 크기로, 띠 줄은 짧게(SMALL) — 0.6초 동안 자연스럽게
+const TRAY_BIG = .3, SMALL_H = 74, MORPH_MS = 600;
+const bigH = () => Math.min(300, Math.max(150, Math.round(H * TRAY_BIG))), stripH = () => bigH() - 10;
+let viewAnim = null;
+let CANDS = 24;
+// 띠 한 줄 = 사진 한 장에서 띠 길이만큼 길게 오린 조각. LONG_PER = 한 줄에 이어지는 사진 수(흐르면 다음 사진으로)
+const LONG_PER = 3;
+let Lw = 0, Lf = 0;
+let making = false, allPieces = [], pool = [], cands = [], sel = -1; // sel -1 = 아무것도 안 고름
+
+// 한 방향 n줄 띠의 위치(폭은 모두 sw, 가운데 정렬)
+function lanes(ext, n) {
+  const o = (ext - (n * (sw + GAP) - GAP)) / 2;
+  return Array.from({ length: n }, (_, i) => ({ pos: o + i * (sw + GAP), w: sw }));
+}
+
+// 띠 줄 수는 컴퓨터 화면(REF) 기준으로 고정 → 폰에서도 판 모양이 같고, 화면이 작으면 띠 폭만 줄어듦
+const REF = [1440, 900], BAR = 52; // BAR = 위 숫자 메뉴·아래 버튼 줄 자리
+function gridCount(scale) {
+  const [rw, rh] = REF, b = Math.min(76, Math.min(rw, rh) / 11), M = Math.max(b * 1.6, Math.min(rw, rh) * 0.17), w = b * scale + GAP;
+  return [Math.floor((rw - 2 * M + GAP) / w), Math.floor((rh - 2 * Math.max(M, BAR + TAIL * b) + GAP) / w)];
+}
+
+// 띠 위치·판·띠 끝(ta·tz = 판 밖으로 나온 길이)
+function place() {
+  const g = GAP, row = (ls, ext) => { const o = (ext - (ls.length * (sw + g) - g)) / 2; ls.forEach((s, i) => s.pos = o + i * (sw + g)); return [o, ls.length * (sw + g) - g]; };
+  const [x, w] = row(warps, W); const [y, h] = row(wefts, H);
+  board = { x, y, w, h };
+  warps.forEach(s => { s.a = y - s.ta; s.z = y + h + s.tz; });
+  wefts.forEach(s => { s.a = x - s.ta; s.z = x + w + s.tz; });
+}
+
+// 사진들을 띠 길이 방향으로 이어 붙임(at = 시작 위치, 한 장 = 띠 전체 길이, fx = 사진의 어느 줄을 오릴지 0~1).
+// 처음엔 사진 한 장이 띠에 딱 맞게(off 0), 흐르면 다음 사진으로 넘어가고 끝까지 가면 처음부터 다시
+function thread(s, seq, horiz) {
+  const m = s.w * 0.06, L = horiz ? Lf : Lw; let at = 0;
+  const items = seq.map(p => { const it = { p, at, len: L, fx: p.fx ?? Math.random() }; at += it.len + m; return it; });
+  return { ...s, horiz, items, total: Math.max(at, 1), off: 0, push: 0, v: sw * FLOW * (0.75 + Math.random() * 0.5) };
+}
+
+async function layout() {
+  const ps = allPieces = await pieces;
+  dpr = Math.min(devicePixelRatio || 1, 2);
+  W = innerWidth; H = innerHeight;
+  cv.width = W * dpr; cv.height = H * dpr;
+  // 판 여백·띠 끝 길이는 기본 폭(base) 기준 → scale로 띠만 두꺼워지고 판 크기는 그대로
+  const sc = 1, [nx, ny] = gridCount(sc);
+  // 화면에 판 + 양쪽 띠 끝(+여백)이 들어가는 가장 큰 기본 폭. 위아래는 메뉴·버튼 줄을 피함
+  const base = Math.min(76, Math.min(W, H) / 11,
+    (W - 32 - nx * GAP) / (nx * sc + 2 * TAIL), (H - 2 * BAR - ny * GAP) / (ny * sc + 2 * TAIL));
+  sw = base * sc;
+  const xs = lanes(W, nx), ys = lanes(H, ny);
+  Lw = ys.length * (sw + GAP) - GAP + 2 * TAIL * base; Lf = xs.length * (sw + GAP) - GAP + 2 * TAIL * base; // 세로·가로 띠 전체 길이
+  const [gw, gf] = deal(ps, xs.length, ys.length);
+  // 가운데 판 + 띠 끝이 여백으로 삐져나옴. 띠는 제자리, 조각만 띠 안에서 흐름
+  const tail = () => ({ ta: TAIL * base, tz: TAIL * base }); // 띠 끝 길이 모두 같게 → 위아래·좌우 한 줄로 정렬
+  warps = xs.map((s, i) => thread({ ...s, ...tail() }, making ? [] : gw[i], false));
+  wefts = ys.map((s, j) => thread({ ...s, ...tail() }, making ? [] : gf[j], true));
+  if (making) { sel = -1; CANDS = Math.ceil(W / sw) * 2; pool = shuffle(ps); cands = Array.from({ length: CANDS }, nextCand); }
+  place();
+  Object.assign(view, { k: 1, x: 0, y: 0 }); viewAnim = null;
+  if (making) renderTray(false); // 판 위치가 정해진 뒤 → 후보 줄·베틀 배치
+  // 위·아래: 평직, 4는 칸마다 무작위
+  over = warps.map((_, i) => wefts.map((_, j) => (i + j) % 2 === 0));
+  draw();
+}
+
+// 원본 사진을 띠 길이에 맞게 키워 가늘고 긴 줄 하나를 오림. 세로 띠 = 세로 줄, 가로 띠 = 가로 줄(사진 방향 그대로)
+function longCut(it, w, horiz) {
+  const { im } = it.p, d = Math.min(devicePixelRatio || 1, 2), t = document.createElement('canvas'), c = t.getContext('2d');
+  [t.width, t.height] = horiz ? [it.len * d, w * d] : [w * d, it.len * d];
+  if (horiz) { const ch = Math.min(im.height, w * im.width / it.len); c.drawImage(im, 0, (im.height - ch) * it.fx, im.width, ch, 0, 0, t.width, t.height); }
+  else { const cw = Math.min(im.width, w * im.height / it.len); c.drawImage(im, (im.width - cw) * it.fx, 0, cw, im.height, 0, 0, t.width, t.height); }
+  return t;
+}
+// 처음 보일 때 한 번 오려 두고 그 뒤로는 그대로 그림
+function drawPiece(s, it, a) {
+  it.cv ??= longCut(it, s.w, s.horiz);
+  s.horiz ? ctx.drawImage(it.cv, a, s.pos, it.len, s.w) : ctx.drawImage(it.cv, s.pos, a, s.w, it.len);
+}
+
+const empty = s => !s.items.length;
+// 빈 줄 = 점선 테두리만
+function dashed(s) {
+  ctx.save(); ctx.setLineDash([4, 4]); ctx.strokeStyle = 'rgba(0,0,0,.28)'; ctx.lineWidth = 1;
+  s.horiz ? ctx.strokeRect(s.a + .5, s.pos + .5, s.z - s.a - 1, s.w - 1) : ctx.strokeRect(s.pos + .5, s.a + .5, s.w - 1, s.z - s.a - 1);
+  ctx.restore();
+}
+
+// 띠를 rect 안에만 그림
+function paint(s, x, y, w, h) {
+  ctx.save();
+  ctx.beginPath(); ctx.rect(x, y, w, h); ctx.clip();
+  ctx.fillStyle = PAPER;
+  s.horiz ? ctx.fillRect(x, s.pos, w, s.w) : ctx.fillRect(s.pos, y, s.w, h);
+  const [c0, c1] = s.horiz ? [x, x + w] : [y, y + h];
+  for (let b = (s.off % s.total) - s.total; b < c1; b += s.total)
+    for (const it of s.items) { const a = b + it.at; if (a < c1 && a + it.len > c0) drawPiece(s, it, a); }
+  // 오린 가장자리
+  ctx.fillStyle = 'rgba(0,0,0,.14)';
+  if (s.horiz) { ctx.fillRect(x, s.pos, w, 1); ctx.fillRect(x, s.pos + s.w - 1, w, 1); } else { ctx.fillRect(s.pos, y, 1, h); ctx.fillRect(s.pos + s.w - 1, y, 1, h); }
+  ctx.restore();
+}
+
+function draw() {
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, W, H);
+  ctx.setTransform(dpr * view.k, 0, 0, dpr * view.k, dpr * view.x, dpr * view.y);
+  ctx.fillStyle = 'rgba(0,0,0,.07)';
+  warps.forEach(s => empty(s) || ctx.fillRect(s.pos + 2, s.a + 3, s.w, s.z - s.a));
+  wefts.forEach(s => empty(s) || ctx.fillRect(s.a + 2, s.pos + 3, s.z - s.a, s.w));
+  warps.forEach(s => empty(s) ? dashed(s) : paint(s, s.pos, s.a, s.w, s.z - s.a));
+  wefts.forEach(s => empty(s) ? dashed(s) : paint(s, s.a, s.pos, s.z - s.a, s.w));
+  // 교차점: 아래 띠 위에 위 띠를 100% 덮어 그림 + 엮인 자리 음영
+  warps.forEach((a, i) => wefts.forEach((b, j) => {
+    const [under, top] = over[i][j] ? [b, a] : [a, b];
+    const x = a.pos, y = b.pos, w = a.w, h = b.w;
+    if (empty(a) || empty(b)) { if (!empty(a) || !empty(b)) paint(empty(a) ? b : a, x, y, w, h); return; } // 한쪽만 꽂힌 칸은 엮이지 않음
+    paint(under, x, y, w, h);
+    paint(top, x, y, w, h);
+    shade(over[i][j], x, y, w, h);
+  }));
+}
+
+// 위 띠 가장자리 바로 바깥(아래 띠가 파고드는 자리) + 위 띠 양 끝이 아래로 휘어 들어가는 음영
+function shade(warpIsOver, x, y, w, h) {
+  const d = sw * 0.18, e = sw * 0.22, k = SHADE;
+  const g = (x0, y0, x1, y1, a) => { const gr = ctx.createLinearGradient(x0, y0, x1, y1); gr.addColorStop(0, `rgba(0,0,0,${a})`); gr.addColorStop(1, 'rgba(0,0,0,0)'); return gr; };
+  if (warpIsOver) {
+    ctx.fillStyle = g(x, 0, x - d, 0, .3 * k); ctx.fillRect(x - d, y, d, h);
+    ctx.fillStyle = g(x + w, 0, x + w + d, 0, .3 * k); ctx.fillRect(x + w, y, d, h);
+    ctx.fillStyle = g(0, y, 0, y + e, .14 * k); ctx.fillRect(x, y, w, e);
+    ctx.fillStyle = g(0, y + h, 0, y + h - e, .14 * k); ctx.fillRect(x, y + h - e, w, e);
+  } else {
+    ctx.fillStyle = g(0, y, 0, y - d, .3 * k); ctx.fillRect(x, y - d, w, d);
+    ctx.fillStyle = g(0, y + h, 0, y + h + d, .3 * k); ctx.fillRect(x, y + h, w, d);
+    ctx.fillStyle = g(x, 0, x + e, 0, .14 * k); ctx.fillRect(x, y, e, h);
+    ctx.fillStyle = g(x + w, 0, x + w - e, 0, .14 * k); ctx.fillRect(x + w - e, y, e, h);
+  }
+}
+
+// 세로 띠는 아래로, 가로 띠는 오른쪽으로 계속 흘러나옴. 잡은 띠는 손 따라, 놓으면 관성(push) 뒤 다시 흐름
+let lastT = 0, held = null, last = 0, lastE = 0;
+function tick(t) {
+  const dt = Math.min(0.05, (t - lastT) / 1000 || 0); lastT = t;
+  let moved = false;
+  [...warps, ...wefts].forEach(s => {
+    if (s === held) return;
+    if (!paused) { s.off += s.v * rate * dt; moved = true; }
+    if (Math.abs(s.push) > 0.05) { s.off += s.push; s.push *= FRICTION; moved = true; } else s.push = 0;
+  });
+  if (viewAnim) { // 베틀 크기·위치 전환
+    const { from, to, t0 } = viewAnim, k = Math.min(1, (t - t0) / MORPH_MS), e = 1 - (1 - k) ** 3;
+    ['k', 'x', 'y'].forEach(n => view[n] = from[n] + (to[n] - from[n]) * e);
+    if (k === 1) viewAnim = null; moved = true;
+  }
+  if (moved) draw();
+  requestAnimationFrame(tick);
+}
+
+// 누른 자리에서 위에 있는 띠를 잡음
+function pick(px, py) {
+  const on = s => (s.horiz ? py : px) >= s.pos && (s.horiz ? py : px) < s.pos + s.w && (s.horiz ? px : py) >= s.a && (s.horiz ? px : py) < s.z;
+  const i = warps.findIndex(on), j = wefts.findIndex(on);
+  if (i >= 0 && j >= 0) return over[i][j] ? warps[i] : wefts[j];
+  return warps[i] || wefts[j] || null;
+}
+// 확대·축소: 휠·트랙패드 핀치·두 손가락 핀치. 띠가 없는 곳을 끌면 판이 3D로 돌아감
+const view = { k: 1, x: 0, y: 0 }, ZOOM = [0.6, 4];
+const toWorld = (cx, cy) => [(cx - view.x) / view.k, (cy - view.y) / view.k];
+// 항상 화면 가운데를 기준으로 확대·축소. 원래 크기 이하로 줄이면 판이 다시 가운데로
+function zoomBy(f) {
+  const k = Math.min(ZOOM[1], Math.max(ZOOM[0], view.k * f)), cx = W / 2, cy = H / 2;
+  if (k <= 1) { view.x = cx * (1 - k); view.y = cy * (1 - k); }
+  else { view.x = cx - (cx - view.x) * k / view.k; view.y = cy - (cy - view.y) * k / view.k; }
+  view.k = k;
+  draw();
+}
+const pts = new Map(); let pinch = null, pan = null;
+const pinchState = () => { const [a, b] = [...pts.values()]; return { d: Math.hypot(a.x - b.x, a.y - b.y), cx: (a.x + b.x) / 2, cy: (a.y + b.y) / 2 }; };
+cv.addEventListener('pointerdown', e => {
+  cv.setPointerCapture(e.pointerId);
+  pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (pts.size === 2) { held = pan = null; pinch = pinchState(); return; }
+  cv.classList.add('drag');
+  // 큐브처럼: 판 바깥 빈 곳을 끌면 판이 3D로 돌아감. 기울어진 동안엔 어디를 끌어도 돌림(띠 끌기·탭은 바로 세우면 다시 됨)
+  const [px, py] = toWorld(e.clientX, e.clientY);
+  held = tilted() ? null : pick(px, py);
+  if (!held) { pan = { x: e.clientX, y: e.clientY }; return; }
+  held.push = 0; last = held.horiz ? px : py; lastE = e.timeStamp;
+});
+cv.addEventListener('pointermove', e => {
+  if (!pts.has(e.pointerId)) return;
+  pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (pinch && pts.size === 2) { // 벌리고 오므리면 확대·축소
+    const n = pinchState();
+    zoomBy(n.d / pinch.d); pinch = n; return;
+  }
+  if (pan) { turn(e.clientX - pan.x, e.clientY - pan.y); pan = { x: e.clientX, y: e.clientY }; return; }
+  if (!held) return;
+  const p = toWorld(e.clientX, e.clientY)[held.horiz ? 0 : 1], d = p - last;
+  held.off += d; held.push = d / Math.max(1, e.timeStamp - lastE) * 16;
+  last = p; lastE = e.timeStamp;
+  draw();
+});
+// 띠 위 한 점에 있는 조각
+function pieceAt(s, px, py) {
+  const a0 = s.horiz ? px : py;
+  for (let b = (s.off % s.total) - s.total; b <= a0; b += s.total)
+    for (const it of s.items) if (a0 >= b + it.at && a0 < b + it.at + it.len) return it;
+  return null;
+}
+const orig = document.getElementById('orig');
+// 원본에서 잘린 자리만 보여줌(--t r b l = 잘린 부분 바깥 여백 %). 세로 띠 = 세로 줄, 가로 띠 = 가로 줄
+function showOrig(p, it, s) {
+  const { im } = p; let [t, r, b, l] = [0, 0, 0, 0];
+  if (s.horiz) { const ch = Math.min(im.height, s.w * im.width / it.len) / im.height * 100; t = it.fx * (100 - ch); b = 100 - t - ch; }
+  else { const cw = Math.min(im.width, s.w * im.height / it.len) / im.width * 100; l = it.fx * (100 - cw); r = 100 - l - cw; }
+  [['--t', t], ['--r', r], ['--b', b], ['--l', l]].forEach(([k, v]) => orig.style.setProperty(k, v + '%'));
+  orig.querySelectorAll('img').forEach(im => im.src = p.src);
+  orig.classList.remove('full'); orig.hidden = false;
+}
+orig.addEventListener('click', () => orig.classList.contains('full') ? orig.hidden = true : orig.classList.add('full'));
+addEventListener('keydown', e => { if (e.key === 'Escape') orig.hidden = true; });
+let tap = null; // 짧게 누르고 거의 안 움직이면 탭
+cv.addEventListener('pointerdown', e => { tap = pts.size === 1 ? { x: e.clientX, y: e.clientY, t: e.timeStamp } : null; });
+cv.addEventListener('pointerup', e => {
+  if (!tap || tilted() || Math.hypot(e.clientX - tap.x, e.clientY - tap.y) > 6 || e.timeStamp - tap.t > 350) return;
+  const [px, py] = toWorld(e.clientX, e.clientY), s = pick(px, py);
+  if (making) { if (s && sel >= 0) fill(s); return; } // 띠를 먼저 골라야 꽂힘
+  const it = s && pieceAt(s, px, py);
+  if (it) { s.push = 0; showOrig(it.p, it, s); }
+});
+const release = e => { pts.delete(e.pointerId); if (pts.size < 2) pinch = null; if (!pts.size) { held = pan = null; cv.classList.remove('drag'); } };
+cv.addEventListener('pointerup', release);
+cv.addEventListener('pointercancel', release);
+// 휠·트랙패드 핀치 = 확대·축소(큐브와 같음)
+cv.addEventListener('wheel', e => { e.preventDefault(); zoomBy(Math.exp(-e.deltaY * (e.ctrlKey ? 0.01 : 0.002))); }, { passive: false });
+// 3D 돌리기: 판을 화면 가운데 기준으로 기울임. 뒤로 넘어가면 뒷면(반전·흐릿)
+const tilt = { x: 0, y: 0 }, TURN = 0.4; // TURN = 끈 거리 1px당 도는 각도
+const tilted = () => Math.abs(tilt.x) > 2 || Math.abs(tilt.y) > 2;
+function turn(dx, dy) {
+  tilt.y += dx * TURN; tilt.x -= dy * TURN;
+  cv.style.transform = tilted() ? `perspective(1600px) rotateX(${tilt.x}deg) rotateY(${tilt.y}deg)` : '';
+  const r = Math.PI / 180; cv.classList.toggle('back', Math.cos(tilt.x * r) * Math.cos(tilt.y * r) < 0);
+}
+// 사파리 트랙패드 핀치
+let gk = 1;
+addEventListener('gesturestart', e => { e.preventDefault(); gk = view.k; });
+addEventListener('gesturechange', e => { e.preventDefault(); zoomBy(gk * e.scale / view.k); });
+const resetView = () => { view.k = 1; view.x = view.y = 0; tilt.x = tilt.y = 0; turn(0, 0); draw(); };
+cv.addEventListener('dblclick', resetView);
+
+const btn = document.getElementById('play');
+const ICON = { play: '<path d="M3 1.5v9l7.5-4.5z"/>', pause: '<path d="M2.5 1.5h2.5v9h-2.5zM7 1.5h2.5v9h-2.5z"/>' };
+const label = () => {
+  btn.innerHTML = `<svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor" aria-hidden="true">${paused ? ICON.play : ICON.pause}</svg>`;
+  btn.setAttribute('aria-label', paused ? '재생' : '멈춤');
+};
+const setPaused = p => { paused = p; label(); draw(); };
+label();
+btn.addEventListener('click', () => setPaused(!paused));
+const rates = document.querySelectorAll('[data-rate]');
+const setRate = r => { rate = r; rates.forEach(b => b.setAttribute('aria-pressed', +b.dataset.rate === r)); };
+rates.forEach(b => b.addEventListener('click', () => setRate(+b.dataset.rate)));
+setRate(1);
+// 고르는 중(done=false) / 다 채움(done=true)에 맞춰 베틀 보기(view)·띠 줄 높이·폭을 정함
+function arrange(done, animate) {
+  const tray = document.getElementById('tray'), box = document.getElementById('cands');
+  const Lx = wefts[0].z - wefts[0].a, Ly = warps[0].z - warps[0].a, th = done ? SMALL_H : bigH();
+  let to = { k: 1, x: 0, y: 0 };
+  if (!done) { // 베틀을 줄여 띠 줄 바로 위에 놓음
+    const bottom = H - 50 - th - 12, k = Math.min(1, (bottom - BAR) / Ly);
+    to = { k, x: W / 2 - k * (wefts[0].a + Lx / 2), y: bottom - k * warps[0].z };
+  }
+  tray.classList.toggle('small', done);
+  Object.assign(box.style, { height: th + 'px', width: Lx * to.k + 'px' });
+  if (animate) viewAnim = { from: { ...view }, to, t0: performance.now() }; else Object.assign(view, to);
+}
+// 후보 띠 전체(세로 띠 길이 그대로)를 크게
+const peek = document.getElementById('peek');
+function peekStrip(p) {
+  const t = longCut({ p, len: Lw, fx: p.fx }, sw, false);
+  peek.replaceChildren(t); peek.hidden = false;
+}
+peek.addEventListener('click', () => peek.hidden = true);
+addEventListener('keydown', e => { if (e.key === 'Escape') peek.hidden = true; });
+// 랜덤 배치: 기존 직조는 사진·오리는 자리를 새로 골라 다시 엮음.
+// 직접 엮기 중엔 빈 줄이 있으면 빈 줄만 랜덤 띠로 채우고(꽂은 띠는 그대로), 다 차 있으면 판 전체를 다시 엮음. 아래 후보 띠도 새로
+document.getElementById('shuffle').addEventListener('click', () => {
+  if (!making) return layout();
+  const all = [...warps, ...wefts], targets = all.some(empty) ? all.filter(empty) : all;
+  pool = shuffle(allPieces);
+  targets.forEach(s => Object.assign(s, thread({ pos: s.pos, w: s.w, a: s.a, z: s.z, ta: s.ta, tz: s.tz }, nextCand(), s.horiz)));
+  sel = -1; cands = cands.map(nextCand); renderTray(); draw();
+});
+// ── 직접 엮기 ── 후보 하나 = 사진 한 장(fx 고정 → 미리보기와 꽂은 띠가 같은 줄)
+function nextCand() {
+  if (!pool.length) pool = shuffle(allPieces);
+  return [{ ...pool.pop(), fx: Math.random() }];
+}
+// 고른 후보를 그 줄에 꽂음(이미 꽂힌 줄이면 바꿈). 쓴 후보 자리는 새 후보로
+function fill(s) {
+  Object.assign(s, thread({ pos: s.pos, w: s.w, a: s.a, z: s.z, ta: s.ta, tz: s.tz }, cands[sel], s.horiz));
+  cands[sel] = nextCand(); sel = -1; renderTray(); draw(); // 꽂고 나면 선택 해제
+}
+function renderTray(animate = true) {
+  const box = document.getElementById('cands'), d = Math.min(devicePixelRatio || 1, 2), keep = box.scrollLeft;
+  box.replaceChildren(...cands.map((c, i) => {
+    const b = document.createElement('button'), t = document.createElement('canvas'), x = t.getContext('2d'), w = sw * d;
+    const sh = stripH(); t.width = w; t.height = sh * d; t.style.width = sw + 'px'; t.style.height = sh + 'px';
+    x.fillStyle = PAPER; x.fillRect(0, 0, w, t.height);
+    // 세로 띠로 오린 모습의 윗부분
+    const full = longCut({ p: c[0], len: Lw, fx: c[0].fx }, sw, false);
+    x.drawImage(full, 0, 0, full.width, Math.min(full.height, t.height), 0, 0, w, Math.min(full.height, t.height));
+    b.type = 'button'; b.setAttribute('aria-label', `후보 띠 ${i + 1}`); b.setAttribute('aria-pressed', i === sel);
+    b.addEventListener('click', () => { if (trayDragged) return; if (sel === i) return peekStrip(c[0]); sel = i; renderTray(); });
+    b.append(t); return b;
+  }));
+  box.scrollLeft = keep;
+  const left = [...warps, ...wefts].filter(empty).length;
+  arrange(!left, animate);
+}
+// 마우스로도 후보 줄을 좌우로 끌어 넘김(터치는 기본 스크롤). 끈 뒤엔 클릭으로 고르지 않음
+let trayDragged = false;
+{
+  const box = document.getElementById('cands'); let st = null;
+  box.addEventListener('pointerdown', e => { if (e.pointerType !== 'mouse') return; st = { x: e.clientX, l: box.scrollLeft }; trayDragged = false; });
+  addEventListener('pointermove', e => { if (!st) return; const dx = e.clientX - st.x; if (Math.abs(dx) > 5) { trayDragged = true; box.classList.add('drag'); } box.scrollLeft = st.l - dx; });
+  addEventListener('pointerup', () => { st = null; box.classList.remove('drag'); setTimeout(() => trayDragged = false); });
+}
+// 직접 엮기 = 주소 #make. 아이콘(직접 엮기 중엔 ✕)이나 뒤로가기로 기존 직조로 돌아감
+const make = document.getElementById('make'), makeIcon = make.innerHTML;
+const CLOSE = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" aria-hidden="true"><path d="M3.5 3.5l9 9M12.5 3.5l-9 9"/></svg>';
+function setMaking(on) {
+  if (on === making) return;
+  making = on; make.setAttribute('aria-pressed', on); make.setAttribute('aria-label', on ? '직접 엮기 끝내기' : '직접 엮기');
+  make.innerHTML = on ? CLOSE : makeIcon;
+  document.getElementById('tray').hidden = !on;
+  if (on) setPaused(true);
+  layout();
+}
+make.addEventListener('click', () => making ? history.back() : (location.hash = 'make'));
+addEventListener('hashchange', () => setMaking(location.hash === '#make'));
+if (location.hash === '#make') history.replaceState(null, '', location.pathname); // 새로고침은 기존 직조부터
+
+document.getElementById('mix').addEventListener('input', e => cv.style.setProperty('--blur', +e.target.value * BLUR_MAX + 'px'));
+const mono = document.getElementById('mono');
+mono.addEventListener('click', () => mono.setAttribute('aria-pressed', document.body.classList.toggle('mono')));
+let rt; addEventListener('resize', () => { clearTimeout(rt); rt = setTimeout(layout, 200); });
+layout().then(() => requestAnimationFrame(tick));
+</script>
