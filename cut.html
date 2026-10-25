@@ -1,7 +1,7 @@
 <!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>거침 부드러움 해체 직조</title>
+<title>직조 — 거침과 부드러움</title>
 <style>
 /* 띠 한 줄 = 사진 한 장을 길게 오린 종이 띠(해체). 켤 때마다 무작위로 엮고, 띠는 흘러나오며 잡아 끌 수 있음. 아래 버튼: 재생·배속·흑백·직접 엮기 */
 :root { --bg: #fff; --fg: #111; color-scheme: light }
@@ -76,6 +76,16 @@ canvas.drag { cursor: grabbing }
 /* 동작 줄이기 설정이어도 멈추지 않고 절반 속도로 */
 @media (prefers-reduced-motion: reduce) { [aria-current] .weave g { animation-duration: 6s } [aria-current] .mini b { animation-duration: 14s } }
 </style>
+<link rel="icon" href="https://y0useunghyun.github.io/workshop/favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="https://y0useunghyun.github.io/workshop/apple-touch-icon.png">
+<!-- 워크숍 공통 틀(헤더·정보 종이) + Adobe Fonts workshop(JJJGothic) -->
+<link rel="stylesheet" href="https://y0useunghyun.github.io/workshop/shell.css">
+<script>
+  (function(d) {
+    var config = { kitId: 'kfl5mqg', scriptTimeout: 3000, async: true },
+    h=d.documentElement,t=setTimeout(function(){h.className=h.className.replace(/\bwf-loading\b/g,"")+" wf-inactive";},config.scriptTimeout),tk=d.createElement("script"),f=false,s=d.getElementsByTagName("script")[0],a;h.className+=" wf-loading";tk.src='https://use.typekit.net/'+config.kitId+'.js';tk.async=true;tk.onload=tk.onreadystatechange=function(){a=this.readyState;if(f||a&&a!="complete"&&a!="loaded")return;f=true;clearTimeout(t);try{Typekit.load(config)}catch(e){}};s.parentNode.insertBefore(tk,s)
+  })(document);
+</script>
 
 <canvas id="c" aria-label="거침과 부드러움 사진을 잘라 섞어 다시 엮은 직조. 띠를 끌어 움직일 수 있음"></canvas>
 <nav id="pg" aria-label="페이지"><a href="cut.html" aria-label="직조" aria-current="page"><svg class="weave" width="16" height="16" viewBox="0 0 16 16" fill="#fff" stroke="currentColor" stroke-width="1.2" aria-hidden="true"><rect x="1" y="4" width="14" height="3"/><rect x="1" y="9" width="14" height="3"/><rect x="4" y="1" width="3" height="14"/><rect x="9" y="1" width="3" height="14"/><g class="pa"><rect x="8.4" y="4" width="4.2" height="3" stroke="none"/><rect x="3.4" y="9" width="4.2" height="3" stroke="none"/><path d="M8.4 4h4.2M8.4 7h4.2M3.4 9h4.2M3.4 12h4.2"/></g><g class="pb"><rect x="3.4" y="4" width="4.2" height="3" stroke="none"/><rect x="8.4" y="9" width="4.2" height="3" stroke="none"/><path d="M3.4 4h4.2M3.4 7h4.2M8.4 9h4.2M8.4 12h4.2"/></g></svg></a><a href="cube.html" aria-label="큐브"><span class="mini" aria-hidden="true"><b><i></i><i></i><i></i><i></i><i></i><i></i></b></span></a></nav>
@@ -84,6 +94,8 @@ canvas.drag { cursor: grabbing }
 <div id="tray" hidden><div id="cands"></div></div>
 <div id="peek" hidden role="dialog" aria-label="띠 크게 보기"></div>
 
+<script src="https://y0useunghyun.github.io/workshop/shell.js"></script>
+<script>window.wsInfo = WS.subpage('weave');</script>
 <script src="strip.js"></script>
 <script>
 const PAPER = '#f4f3ee';          // 트레이싱지 바탕
@@ -350,7 +362,7 @@ const release = e => { pts.delete(e.pointerId); if (pts.size < 2) pinch = null; 
 cv.addEventListener('pointerup', release);
 cv.addEventListener('pointercancel', release);
 // 휠·트랙패드 핀치 = 확대·축소(큐브와 같음)
-cv.addEventListener('wheel', e => { e.preventDefault(); zoomBy(Math.exp(-e.deltaY * (e.ctrlKey ? 0.01 : 0.002))); }, { passive: false });
+cv.addEventListener('wheel', e => { if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) return; e.preventDefault(); zoomBy(Math.exp(-e.deltaY * (e.ctrlKey ? 0.01 : 0.002))); }, { passive: false });
 // 3D 돌리기: 판을 화면 가운데 기준으로 기울임. 뒤로 넘어가면 뒷면(반전·흐릿)
 const tilt = { x: 0, y: 0 }, TURN = 0.4; // TURN = 끈 거리 1px당 도는 각도
 const tilted = () => Math.abs(tilt.x) > 2 || Math.abs(tilt.y) > 2;

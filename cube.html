@@ -1,7 +1,7 @@
 <!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>거침 부드러움 큐브</title>
+<title>큐브 — 거침과 부드러움</title>
 <style>
 /* N×N 큐브(3·5): 칸마다 서로 다른 사진의 한 부분, 새로고침마다 바뀜.
    큐브 위를 끌면 그 줄이 돌아가고, 빈 곳을 끌면 큐브 전체가 돌아감 */
@@ -54,12 +54,24 @@ body.drag { cursor: grabbing }
 /* 동작 줄이기 설정이어도 멈추지 않고 절반 속도로 */
 @media (prefers-reduced-motion: reduce) { [aria-current] .weave g { animation-duration: 6s } [aria-current] .mini b { animation-duration: 14s } }
 </style>
+<link rel="icon" href="https://y0useunghyun.github.io/workshop/favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="https://y0useunghyun.github.io/workshop/apple-touch-icon.png">
+<!-- 워크숍 공통 틀(헤더·정보 종이) + Adobe Fonts workshop(JJJGothic) -->
+<link rel="stylesheet" href="https://y0useunghyun.github.io/workshop/shell.css">
+<script>
+  (function(d) {
+    var config = { kitId: 'kfl5mqg', scriptTimeout: 3000, async: true },
+    h=d.documentElement,t=setTimeout(function(){h.className=h.className.replace(/\bwf-loading\b/g,"")+" wf-inactive";},config.scriptTimeout),tk=d.createElement("script"),f=false,s=d.getElementsByTagName("script")[0],a;h.className+=" wf-loading";tk.src='https://use.typekit.net/'+config.kitId+'.js';tk.async=true;tk.onload=tk.onreadystatechange=function(){a=this.readyState;if(f||a&&a!="complete"&&a!="loaded")return;f=true;clearTimeout(t);try{Typekit.load(config)}catch(e){}};s.parentNode.insertBefore(tk,s)
+  })(document);
+</script>
 
 <nav id="pg" aria-label="페이지"><a href="cut.html" aria-label="직조"><svg class="weave" width="16" height="16" viewBox="0 0 16 16" fill="#fff" stroke="currentColor" stroke-width="1.2" aria-hidden="true"><rect x="1" y="4" width="14" height="3"/><rect x="1" y="9" width="14" height="3"/><rect x="4" y="1" width="3" height="14"/><rect x="9" y="1" width="3" height="14"/><g class="pa"><rect x="8.4" y="4" width="4.2" height="3" stroke="none"/><rect x="3.4" y="9" width="4.2" height="3" stroke="none"/><path d="M8.4 4h4.2M8.4 7h4.2M3.4 9h4.2M3.4 12h4.2"/></g><g class="pb"><rect x="3.4" y="4" width="4.2" height="3" stroke="none"/><rect x="8.4" y="9" width="4.2" height="3" stroke="none"/><path d="M3.4 4h4.2M3.4 7h4.2M8.4 9h4.2M8.4 12h4.2"/></g></svg></a><a href="cube.html" aria-label="큐브" aria-current="page"><span class="mini" aria-hidden="true"><b><i></i><i></i><i></i><i></i><i></i><i></i></b></span></a></nav>
 <div id="stage"><div id="cube" role="img" aria-label="거침과 부드러움 사진의 일부분으로 만든 큐브. 큐브를 끌면 줄이 돌아가고, 빈 곳을 끌면 전체가 돌아감"></div></div>
 <div id="orig" hidden role="dialog" aria-label="원본"><div class="crop"><video muted playsinline hidden></video></div><img alt=""><video muted playsinline hidden></video></div>
 <div id="ctl"><button id="play" type="button"></button><span aria-hidden="true" style="opacity:.2;padding:8px 2px">|</span><button type="button" data-n="3">3×3</button><button type="button" data-n="5">5×5</button><span aria-hidden="true" style="opacity:.2;padding:8px 2px">|</span><button id="snd" type="button"></button></div>
 
+<script src="https://y0useunghyun.github.io/workshop/shell.js"></script>
+<script>window.wsInfo = WS.subpage('cube');</script>
 <script src="strip.js"></script>
 <script>
 const SIZE = () => Math.min(240, Math.min(innerWidth, innerHeight) * 0.42); // 큐브 한 변(px)
@@ -192,7 +204,7 @@ function tick() {
 const ZOOM = [0.6, 3]; let zoom = 1, pinch = null;
 const pts = new Map(), pinchD = () => { const [a, b] = [...pts.values()]; return Math.hypot(a.x - b.x, a.y - b.y); };
 function zoomBy(f) { zoom = Math.min(ZOOM[1], Math.max(ZOOM[0], zoom * f)); document.getElementById('stage').style.setProperty('--zoom', zoom); }
-addEventListener('wheel', e => { e.preventDefault(); zoomBy(Math.exp(-e.deltaY * (e.ctrlKey ? 0.01 : 0.002))); }, { passive: false });
+addEventListener('wheel', e => { if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) return; e.preventDefault(); zoomBy(Math.exp(-e.deltaY * (e.ctrlKey ? 0.01 : 0.002))); }, { passive: false });
 let gk = 1; // 사파리 트랙패드 핀치
 addEventListener('gesturestart', e => { e.preventDefault(); gk = zoom; });
 addEventListener('gesturechange', e => { e.preventDefault(); zoomBy(gk * e.scale / zoom); });
